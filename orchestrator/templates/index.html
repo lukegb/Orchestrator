@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+    <div class="flex justify-between align-center mb-4">
+        <h2>Active Deployments</h2>
+        <form action="/api/sync" method="POST">
+            <button type="submit" class="btn btn-outline">Trigger Manual Sync</button>
+        </form>
+    </div>
+    {% if repositories %}
+        <div class="flex flex-col gap-4">
+            {% for repo in repositories %}
+                <div class="card mb-0">
+                    <h3 class="mt-0 mb-4 border-bottom pb-2">{{ repo.name }}</h3>
+                    {% if repo.open_pull_requests %}
+                        <div class="flex flex-col gap-2">
+                            {% for pr in repo.open_pull_requests %}
+                                <div class="bg-light p-4 rounded-lg border-all">
+                                    <div class="flex justify-between align-start">
+                                        <div>
+                                            <h4 class="m-0 mb-2">
+                                                <a href="https://github.com/{{ pr.repository.name }}/pull/{{ pr.number }}">PR #{{ pr.number }} - <em>{{ pr.title }}</em></a>
+                                            </h4>
+                                            <div class="text-muted text-sm">
+                                                <strong>Author:</strong> {{ pr.author }}
+                                                <br>
+                                                <strong>Status:</strong> <span class="{% if pr.is_open %}bg-success{% else %}bg-danger{% endif %} text-white py-1 px-2 rounded text-xs">
+                                                {% if pr.is_open %}
+                                                    Open
+                                                {% else %}
+                                                    Closed
+                                                {% endif %}
+                                            </span>
+                                            {% if pr.deployments %}
+                                                <br>
+                                                <strong>Deployment Project:</strong> {{ pr.deployments[0].project_name }}
+                                                <br>
+                                                <strong>Deployment Status:</strong> <span class="bg-neutral text-dark py-1 px-2 rounded text-xs">{{ pr.deployments[0].status }}</span>
+                                                <br>
+                                                <strong>Ports:</strong>
+                                                {% for port in pr.deployments[0].ports %}
+                                                    <a href="https://{{ port.hostname(app_config) }}">{{ port.name }}</a>
+                                                {% endfor %}
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% if pr.deployments %}
+                                        {% set dep = pr.deployments[0] %}
+                                        <div class="flex gap-1 flex-wrap max-w-xs justify-end">
+                                            <form action="/api/deployments/{{ dep.id }}/action?type=update"
+                                                  method="POST">
+                                                <button class="btn btn-primary" title="Force Update">Update</button>
+                                            </form>
+                                            <form action="/api/deployments/{{ dep.id }}/action?type=teardown"
+                                                  method="POST">
+                                                <button class="btn btn-danger" title="Force Teardown">Teardown</button>
+                                            </form>
+                                            {% set repo_config = app_config.repositories.get(repo.name) %}
+                                            {% if repo_config and repo_config.custom_actions %}
+                                                <div class="w-full border-top my-2"></div>
+                                                {% for action_name, action_cmd in repo_config.custom_actions.items() %}
+                                                    <form action="/api/deployments/{{ dep.id }}/action?type=custom&action_name={{ action_name }}"
+                                                          method="POST">
+                                                        <button class="btn btn-outline text-xs px-2 py-1">{{ action_name }}</button>
+                                                    </form>
+                                                {% endfor %}
+                                            {% endif %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted text-sm m-0">No pull requests tracked for this repository.</p>
+                {% endif %}
+            </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="card text-center text-muted">
+        <p>No repositories configured or tracked for your account yet.</p>
+    </div>
+{% endif %}
+{% endblock %}

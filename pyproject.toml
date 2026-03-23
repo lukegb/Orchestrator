@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Luke Granger-Brown <git@lukegb.com>
+# SPDX-License-Identifier: MIT
+
+[project]
+name = "orchestrator"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+  "starlette",
+  "uvicorn",
+  "sqlalchemy",
+  "aiosqlite",
+  "alembic",
+  "httpx",
+  "jinja2",
+  "authlib",
+  "itsdangerous",
+]
+
+[dependency-groups]
+dev = ["mypy>=1.19.1", "pytest", "pytest-asyncio", "ruff"]
