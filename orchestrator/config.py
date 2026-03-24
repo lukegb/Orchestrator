@@ -46,6 +46,7 @@ class AppConfig:
     bare_clones_path: Path
     worktrees_path: Path
     nginx_config_path: Path
+    logs_path: Path
     app_secret_seed: str
     domain_suffix: str
     repositories: Dict[str, RepoConfig]
@@ -80,6 +81,7 @@ def load_config(path: Path | str) -> AppConfig:
     nginx_config_path = Path(
         paths.get("nginx_config", "/etc/nginx/sites-available/orchestrator")
     )
+    logs = Path(paths.get("logs", "/var/lib/orchestrator/logs"))
 
     repositories: Dict[str, RepoConfig] = {}
     for repo_name, repo_data in data.get("repositories", {}).items():
@@ -116,5 +118,6 @@ def load_config(path: Path | str) -> AppConfig:
         bare_clones_path=bare_clones,
         worktrees_path=worktrees,
         nginx_config_path=nginx_config_path,
+        logs_path=logs,
         repositories=repositories,
     )

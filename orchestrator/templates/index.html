@@ -59,6 +59,7 @@
                                     {% if pr.deployments %}
                                         {% set dep = pr.deployments[0] %}
                                         <div class="flex gap-1 flex-wrap max-w-xs justify-end">
+                                            <a href="/deployments/{{ dep.id }}/logs" class="btn btn-outline">Logs</a>
                                             <form action="/api/deployments/{{ dep.id }}/action?type=update"
                                                   method="POST">
                                                 <button class="btn btn-primary" title="Force Update">Update</button>

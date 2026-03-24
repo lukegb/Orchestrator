@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,13 +8,15 @@ from starlette.middleware import Middleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 from starlette.templating import Jinja2Templates
+from starlette.websockets import WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from orchestrator.config import load_config
 from orchestrator.db import init_db, get_session
+from orchestrator.docker_utils import compose_logs_stream
 from orchestrator.git_utils import generate_project_name
 from orchestrator.github import GitHubClient
 from orchestrator.models import Deployment, PullRequest, Repository, TrustedUser
@@ -177,9 +180,7 @@ async def manual_deploy(request: Request) -> Response:
             return RedirectResponse(url="/?error=pr_closed", status_code=303)
 
         if pr.deployments:
-            return RedirectResponse(
-                url="/?error=already_deployed", status_code=303
-            )
+            return RedirectResponse(url="/?error=already_deployed", status_code=303)
 
         # Verify the commit hasn't changed by checking GitHub
         owner, repo = pr.repository.name.split("/")
@@ -192,9 +193,7 @@ async def manual_deploy(request: Request) -> Response:
             await client.close()
 
         if live_head_sha != expected_head_sha:
-            return RedirectResponse(
-                url="/?error=commit_changed", status_code=303
-            )
+            return RedirectResponse(url="/?error=commit_changed", status_code=303)
 
         # Create deployment
         project_name = generate_project_name()
@@ -209,6 +208,124 @@ async def manual_deploy(request: Request) -> Response:
     return RedirectResponse(url="/", status_code=303)
 
 
+async def deployment_logs_page(request: Request) -> Response:
+    """HTML page for viewing deployment logs."""
+    if not request.session.get("user"):
+        return Response("Unauthorized", status_code=401)
+
+    dep_id = request.path_params["id"]
+
+    async with get_session() as session:
+        query = (
+            select(Deployment)
+            .where(Deployment.id == dep_id)
+            .options(
+                selectinload(Deployment.pull_request).selectinload(
+                    PullRequest.repository
+                )
+            )
+        )
+        result = await session.execute(query)
+        dep = result.scalars().first()
+
+        if not dep:
+            return Response("Not found", status_code=404)
+
+        return templates.TemplateResponse(
+            request,
+            "logs.html",
+            {
+                "user": request.session.get("user"),
+                "deployment": dep,
+            },
+        )
+
+
+async def _tail_log_file(ws: WebSocket, log_path: Path) -> None:
+    """Tail a log file and send lines over WebSocket."""
+    # Wait for the file to exist
+    while not log_path.exists():
+        await asyncio.sleep(0.5)
+
+    with open(log_path, "r") as f:
+        while True:
+            line = f.readline()
+            if line:
+                await ws.send_text(line.rstrip("\n"))
+            else:
+                await asyncio.sleep(0.3)
+
+
+async def ws_logs(ws: WebSocket) -> None:
+    """WebSocket endpoint for streaming deployment logs."""
+    # Session auth: Starlette passes session middleware to WebSocket
+    user = ws.session.get("user")
+    if not user:
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+
+    dep_id = ws.path_params["id"]
+    log_type = ws.query_params.get("type", "deployment")
+
+    async with get_session() as session:
+        query = (
+            select(Deployment)
+            .where(Deployment.id == dep_id)
+            .options(
+                selectinload(Deployment.pull_request).selectinload(
+                    PullRequest.repository
+                )
+            )
+        )
+        result = await session.execute(query)
+        dep = result.scalars().first()
+
+    if not dep:
+        await ws.close(code=4004, reason="Not found")
+        return
+
+    await ws.accept()
+
+    try:
+        if log_type == "live":
+            # Stream live docker compose logs
+            repo = dep.pull_request.repository
+            repo_config = app_config.repositories.get(repo.name)
+            if not repo_config:
+                await ws.send_text("Error: repository config not found")
+                await ws.close()
+                return
+
+            worktree_path = app_config.worktrees_path / dep.project_name
+
+            if not worktree_path.exists():
+                await ws.send_text(
+                    "Error: worktree not found (deployment may not be running)"
+                )
+                await ws.close()
+                return
+
+            async for line in compose_logs_stream(
+                worktree_path, dep.project_name, repo_config.compose_files
+            ):
+                await ws.send_text(line.rstrip("\n"))
+
+            # Stream ended (process exited) — notify client and wait for disconnect
+            await ws.send_text("[stream ended]")
+            # Keep connection open until client disconnects
+            while True:
+                await ws.receive_text()
+        else:
+            # Tail the deployment log file
+            log_path = app_config.logs_path / f"{dep.project_name}.log"
+            await _tail_log_file(ws, log_path)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+
+
 routes = [
     Route("/", index, methods=["GET"]),
     Route("/login", login, methods=["GET"]),
@@ -216,9 +333,9 @@ routes = [
     Route("/logout", logout, methods=["GET", "POST"]),
     Route("/api/sync", sync_endpoint, methods=["POST"]),
     Route("/api/deployments/{id:int}/action", deployment_action, methods=["POST"]),
-    Route(
-        "/api/pull-requests/{id:int}/deploy", manual_deploy, methods=["POST"]
-    ),
+    Route("/api/pull-requests/{id:int}/deploy", manual_deploy, methods=["POST"]),
+    Route("/deployments/{id:int}/logs", deployment_logs_page, methods=["GET"]),
+    WebSocketRoute("/ws/logs/{id:int}", ws_logs),
 ]
 
 middleware = [Middleware(SessionMiddleware, secret_key=app_config.oauth.session_secret)]

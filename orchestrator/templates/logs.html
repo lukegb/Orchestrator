@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+    <div class="mb-4">
+        <a href="/" class="text-sm">&larr; Back to dashboard</a>
+    </div>
+    <div class="card mb-0">
+        <div class="flex justify-between align-center mb-4">
+            <div>
+                <h3 class="mt-0 mb-0">Logs: {{ deployment.project_name }}</h3>
+                <div class="text-muted text-sm">
+                    {{ deployment.pull_request.repository.name }} &middot;
+                    PR #{{ deployment.pull_request.number }} &middot;
+                    Status: <span class="bg-neutral text-dark py-1 px-2 rounded text-xs">{{ deployment.status }}</span>
+                </div>
+            </div>
+            <div class="flex gap-1">
+                <button id="tab-deployment"
+                        class="btn btn-primary log-tab-active"
+                        onclick="switchTab('deployment')">Deployment Log</button>
+                <button id="tab-live" class="btn btn-outline" onclick="switchTab('live')">Live Containers</button>
+            </div>
+        </div>
+        <div class="log-viewer-container">
+            <pre id="log-output" class="log-viewer"></pre>
+            <button id="scroll-btn"
+                    class="scroll-to-bottom-btn"
+                    onclick="scrollToBottom()"
+                    style="display:none">&#x25BC; Scroll to bottom</button>
+        </div>
+        <div class="flex justify-between align-center mt-2">
+            <span id="ws-status" class="text-muted text-xs">Connecting...</span>
+            <button class="btn btn-outline text-xs" onclick="clearLog()">Clear</button>
+        </div>
+    </div>
+    <script>
+        const deploymentId = {{ deployment.id }};
+        const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+        let currentTab = 'deployment';
+        let ws = null;
+        let reconnectTimer = null;
+        let userScrolled = false;
+
+        const logOutput = document.getElementById('log-output');
+        const scrollBtn = document.getElementById('scroll-btn');
+        const wsStatus = document.getElementById('ws-status');
+
+        function switchTab(tab) {
+            if (tab === currentTab) return;
+            currentTab = tab;
+
+            document.getElementById('tab-deployment').className =
+                tab === 'deployment' ? 'btn btn-primary log-tab-active' : 'btn btn-outline';
+            document.getElementById('tab-live').className =
+                tab === 'live' ? 'btn btn-primary log-tab-active' : 'btn btn-outline';
+
+            clearLog();
+            connect();
+        }
+
+        function connect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+
+            wsStatus.textContent = 'Connecting...';
+            ws = new WebSocket(wsBase + '/ws/logs/' + deploymentId + '?type=' + currentTab);
+
+            ws.onopen = function() {
+                wsStatus.textContent = 'Connected';
+            };
+
+            ws.onmessage = function(event) {
+                const line = document.createTextNode(event.data + '\n');
+                logOutput.appendChild(line);
+
+                // Keep max ~10000 lines
+                while (logOutput.childNodes.length > 10000) {
+                    logOutput.removeChild(logOutput.firstChild);
+                }
+
+                if (!userScrolled) {
+                    scrollToBottom();
+                }
+            };
+
+            ws.onclose = function(event) {
+                wsStatus.textContent = 'Disconnected. Reconnecting in 3s...';
+                reconnectTimer = setTimeout(connect, 3000);
+            };
+
+            ws.onerror = function() {
+                wsStatus.textContent = 'Connection error';
+            };
+        }
+
+        function scrollToBottom() {
+            const container = logOutput.parentElement;
+            container.scrollTop = container.scrollHeight;
+            userScrolled = false;
+            scrollBtn.style.display = 'none';
+        }
+
+        function clearLog() {
+            logOutput.textContent = '';
+            userScrolled = false;
+            scrollBtn.style.display = 'none';
+        }
+
+        // Detect user scrolling up
+        logOutput.parentElement.addEventListener('scroll', function() {
+            const container = this;
+            const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+            userScrolled = !atBottom;
+            scrollBtn.style.display = atBottom ? 'none' : 'block';
+        });
+
+        // Start
+        connect();
+    </script>
+{% endblock %}
