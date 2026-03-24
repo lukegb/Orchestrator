@@ -78,6 +78,7 @@ async def sync_repository(
         is_open = pr_data["state"] == "OPEN"
         author = pr_data["author"]["login"] if pr_data.get("author") else "unknown"
         head_sha = pr_data["headRefOid"]
+        base_ref = pr_data.get("baseRefName")
         updated_at = datetime.fromisoformat(pr_data["updatedAt"].replace("Z", "+00:00"))
 
         pr = existing_prs.get(number)
@@ -90,6 +91,7 @@ async def sync_repository(
                 title=pr_data["title"],
                 repository_id=db_repo.id,
                 head_sha=head_sha,
+                base_ref=base_ref,
                 is_open=is_open,
                 author=author,
                 updated_at=updated_at,
@@ -100,6 +102,7 @@ async def sync_repository(
             existing_prs[number] = pr
         else:
             pr.title = pr_data["title"]
+            pr.base_ref = base_ref
             if pr.head_sha != head_sha:
                 pr.head_sha = head_sha
                 needs_update = True

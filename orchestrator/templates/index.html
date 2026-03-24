@@ -1,5 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
+    {% if error %}
+        <div class="alert alert-warning mb-4">
+            {% if error == "commit_changed" %}
+                <strong>Deploy failed:</strong> The head commit of the pull request has changed since the page was loaded. Please review the updated commit and try again.
+            {% elif error == "pr_closed" %}
+                <strong>Deploy failed:</strong> The pull request is no longer open.
+            {% elif error == "already_deployed" %}
+                <strong>Deploy failed:</strong> This pull request already has a deployment.
+            {% else %}
+                <strong>Error:</strong> An unexpected error occurred.
+            {% endif %}
+        </div>
+    {% endif %}
     <div class="flex justify-between align-center mb-4">
         <h2>Active Deployments</h2>
         <form action="/api/sync" method="POST">
@@ -64,6 +77,27 @@
                                                     </form>
                                                 {% endfor %}
                                             {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <div class="deploy-prompt p-4 rounded-lg border-all">
+                                            <div class="text-sm mb-2">
+                                                <strong>No deployment.</strong> Review the changes and deploy manually:
+                                            </div>
+                                            <div class="flex align-center gap-1 mb-2">
+                                                <span class="text-sm text-muted">Head commit:</span>
+                                                <code class="font-mono text-xs">{{ pr.head_sha[:12] }}</code>
+                                                {% if pr.base_ref %}
+                                                    <span class="text-muted text-sm">·</span>
+                                                    <a href="https://github.com/{{ pr.repository.name }}/compare/{{ pr.base_ref }}...{{ pr.head_sha }}"
+                                                       class="text-sm"
+                                                       target="_blank"
+                                                       rel="noopener">View changes ↗</a>
+                                                {% endif %}
+                                            </div>
+                                            <form action="/api/pull-requests/{{ pr.id }}/deploy" method="POST">
+                                                <input type="hidden" name="expected_head_sha" value="{{ pr.head_sha }}">
+                                                <button type="submit" class="btn btn-success">Deploy this commit</button>
+                                            </form>
                                         </div>
                                     {% endif %}
                                 </div>

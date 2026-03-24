@@ -100,6 +100,7 @@ class GitHubClient:
                 author {
                   login
                 }
+                baseRefName
                 headRefOid
                 updatedAt
               }
@@ -119,6 +120,24 @@ class GitHubClient:
         )
         users = resp.json()
         return [user["login"] for user in users]
+
+    async def get_pull_request_head_sha(
+        self, owner: str, repo: str, number: int
+    ) -> str:
+        """Fetch the current head SHA for a specific pull request from GitHub."""
+        query = """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              headRefOid
+            }
+          }
+        }
+        """
+        data = await self.graphql(
+            query, {"owner": owner, "repo": repo, "number": number}
+        )
+        return data["repository"]["pullRequest"]["headRefOid"]
 
     async def close(self) -> None:
         await self.client.aclose()

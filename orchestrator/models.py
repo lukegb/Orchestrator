@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from sqlalchemy import String, Integer, ForeignKey, Boolean, DateTime, and_
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase, relationship
@@ -48,6 +48,7 @@ class PullRequest(Base):
     title: Mapped[str] = mapped_column(String(255))
     repository_id: Mapped[int] = mapped_column(ForeignKey("repository.id"))
     head_sha: Mapped[str] = mapped_column(String(40))
+    base_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
     author: Mapped[str] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(DateTime)

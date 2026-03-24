@@ -14,6 +14,8 @@ from sqlalchemy.orm import selectinload
 
 from orchestrator.config import load_config
 from orchestrator.db import init_db, get_session
+from orchestrator.git_utils import generate_project_name
+from orchestrator.github import GitHubClient
 from orchestrator.models import Deployment, PullRequest, Repository, TrustedUser
 from orchestrator.oauth import oauth, setup_oauth
 from orchestrator.sync import sync_all
@@ -42,6 +44,7 @@ async def index(request: Request) -> Response:
 
     login_name = user["login"]
     repositories = []
+    error = request.query_params.get("error")
 
     async with get_session() as session:
         # Check user access (simplified: get all repos where user is trusted)
@@ -71,6 +74,7 @@ async def index(request: Request) -> Response:
                 "user": user,
                 "repositories": repositories,
                 "app_config": app_config,
+                "error": error,
             },
         )
 
@@ -143,6 +147,68 @@ async def deployment_action(request: Request) -> Response:
     return RedirectResponse(url="/", status_code=303)
 
 
+async def manual_deploy(request: Request) -> Response:
+    if not request.session.get("user"):
+        return Response("Unauthorized", status_code=401)
+
+    pr_id = request.path_params["id"]
+    form = await request.form()
+    expected_head_sha = form.get("expected_head_sha", "")
+
+    if not expected_head_sha:
+        return Response("Missing expected_head_sha", status_code=400)
+
+    async with get_session() as session:
+        query = (
+            select(PullRequest)
+            .where(PullRequest.id == pr_id)
+            .options(
+                selectinload(PullRequest.repository),
+                selectinload(PullRequest.deployments),
+            )
+        )
+        result = await session.execute(query)
+        pr = result.scalars().first()
+
+        if not pr:
+            return Response("Pull request not found", status_code=404)
+
+        if not pr.is_open:
+            return RedirectResponse(url="/?error=pr_closed", status_code=303)
+
+        if pr.deployments:
+            return RedirectResponse(
+                url="/?error=already_deployed", status_code=303
+            )
+
+        # Verify the commit hasn't changed by checking GitHub
+        owner, repo = pr.repository.name.split("/")
+        client = GitHubClient(app_config)
+        try:
+            live_head_sha = await client.get_pull_request_head_sha(
+                owner, repo, pr.number
+            )
+        finally:
+            await client.close()
+
+        if live_head_sha != expected_head_sha:
+            return RedirectResponse(
+                url="/?error=commit_changed", status_code=303
+            )
+
+        # Create deployment
+        project_name = generate_project_name()
+        deployment = Deployment(
+            pull_request_id=pr.id,
+            project_name=project_name,
+            status="needs_bringup",
+        )
+        session.add(deployment)
+        await session.commit()
+
+    return RedirectResponse(url="/", status_code=303)
+
+
 routes = [
     Route("/", index, methods=["GET"]),
     Route("/login", login, methods=["GET"]),
@@ -150,6 +216,9 @@ routes = [
     Route("/logout", logout, methods=["GET", "POST"]),
     Route("/api/sync", sync_endpoint, methods=["POST"]),
     Route("/api/deployments/{id:int}/action", deployment_action, methods=["POST"]),
+    Route(
+        "/api/pull-requests/{id:int}/deploy", manual_deploy, methods=["POST"]
+    ),
 ]
 
 middleware = [Middleware(SessionMiddleware, secret_key=app_config.oauth.session_secret)]
