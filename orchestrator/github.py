@@ -92,7 +92,7 @@ class GitHubClient:
         query = """
         query($owner: String!, $repo: String!) {
           repository(owner: $owner, name: $repo) {
-            pullRequests(first: 100, states: [OPEN, CLOSED, MERGED]) {
+            pullRequests(first: 100, states: [OPEN, CLOSED, MERGED], orderBy: {field: CREATED_AT, direction: DESC}) {
               nodes {
                 number
                 title
