@@ -279,7 +279,7 @@ async def _tail_log_file(ws: WebSocket, log_path: Path) -> None:
         for t in [reader_task, disconnect_task]:
             try:
                 await t
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
 
 
