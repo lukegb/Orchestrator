@@ -242,18 +242,45 @@ async def deployment_logs_page(request: Request) -> Response:
 
 
 async def _tail_log_file(ws: WebSocket, log_path: Path) -> None:
-    """Tail a log file and send lines over WebSocket."""
-    # Wait for the file to exist
-    while not log_path.exists():
-        await asyncio.sleep(0.5)
+    """Tail a log file and send lines over WebSocket, cancellable on disconnect."""
 
-    with open(log_path, "r") as f:
-        while True:
-            line = f.readline()
-            if line:
-                await ws.send_text(line.rstrip("\n"))
-            else:
-                await asyncio.sleep(0.3)
+    async def _reader() -> None:
+        # Wait for the file to exist
+        while not log_path.exists():
+            await asyncio.sleep(0.5)
+
+        with open(log_path, "r") as f:
+            while True:
+                line = f.readline()
+                if line:
+                    await ws.send_text(line.rstrip("\n"))
+                else:
+                    await asyncio.sleep(0.3)
+
+    async def _wait_disconnect() -> None:
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+
+    reader_task = asyncio.create_task(_reader())
+    disconnect_task = asyncio.create_task(_wait_disconnect())
+    try:
+        # Wait until either the reader fails or the client disconnects
+        done, pending = await asyncio.wait(
+            [reader_task, disconnect_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    finally:
+        reader_task.cancel()
+        disconnect_task.cancel()
+        # Suppress CancelledError from the tasks
+        for t in [reader_task, disconnect_task]:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 async def ws_logs(ws: WebSocket) -> None:

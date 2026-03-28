@@ -26,7 +26,7 @@ async def main() -> None:
     init_db(app_config.database_url)
 
     logger.info("Starting synchronization background loop...")
-    await run_sync_loop(app_config, interval=60, once=True)
+    await run_sync_loop(app_config, interval=60)
 
 
 if __name__ == "__main__":
