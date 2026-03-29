@@ -25,7 +25,7 @@
             <button id="scroll-btn"
                     class="scroll-to-bottom-btn"
                     onclick="scrollToBottom()"
-                    style="display:none">&#x25BC; Scroll to bottom</button>
+                    style="display:none">&#x25BC;</button>
         </div>
         <div class="flex justify-between align-center mt-2">
             <span id="ws-status" class="text-muted text-xs">Connecting...</span>
@@ -59,6 +59,7 @@
 
         function connect() {
             if (ws) {
+                ws.onclose = function() {};
                 ws.close();
                 ws = null;
             }
