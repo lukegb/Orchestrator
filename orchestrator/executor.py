@@ -54,11 +54,16 @@ async def execute_deployment(
 
         try:
             if dep.status in ("needs_bringup", "needs_update"):
-                _log(log_file, f"Creating deployment in GitHub for {dep.pull_request.head_sha}")
-                owner, _, repo_barename = repo.name.partition('/')
+                _log(
+                    log_file,
+                    f"Creating deployment in GitHub for {dep.pull_request.head_sha}",
+                )
+                owner, _, repo_barename = repo.name.partition("/")
                 deployment_id = await github.create_deployment(
-                    owner=owner, repo=repo_barename, ref=dep.pull_request.head_ref_github_graphql_id,
-                    environment=dep.project_name
+                    owner=owner,
+                    repo=repo_barename,
+                    ref=dep.pull_request.head_ref_github_graphql_id,
+                    environment=dep.project_name,
                 )
                 _log(log_file, f"Created deployment ID {deployment_id}")
                 dep.github_graphql_id = deployment_id
@@ -66,7 +71,8 @@ async def execute_deployment(
                     deployment_id=deployment_id,
                     log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
                     environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
-                    state="IN_PROGRESS")
+                    state="IN_PROGRESS",
+                )
 
                 _log(log_file, f"Ensuring bare repo exists at {bare_path}")
                 await clone_bare(repo_url, bare_path)
@@ -135,8 +141,9 @@ async def execute_deployment(
                         deployment_id=deployment_id,
                         log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
                         environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
-                        state="SUCCESS")
-                except:
+                        state="SUCCESS",
+                    )
+                except Exception:
                     logger.exception("Updating deployment with success state")
 
             elif dep.status == "needs_teardown":
@@ -168,12 +175,13 @@ async def execute_deployment(
 
         except Exception as e:
             if deployment_id:
-                 await github.create_deployment_status(
-                     deployment_id=deployment_id,
-                     log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
-                     environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
-                     description=str(e),
-                     state="FAILURE")
+                await github.create_deployment_status(
+                    deployment_id=deployment_id,
+                    log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
+                    environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
+                    description=str(e),
+                    state="FAILURE",
+                )
             _log(log_file, "")
             _log(log_file, f"!!! ERROR: {e}")
             logger.error(f"Failed to execute {dep.status} for {dep.project_name}: {e}")

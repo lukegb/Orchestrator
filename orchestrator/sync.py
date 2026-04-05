@@ -36,7 +36,7 @@ async def sync_repository(
 
     try:
         github_trusted = await client.get_collaborators(owner, repo)
-    except Exception as e:
+    except Exception:
         logger.exception(f"Failed to fetch collaborators for {repo_name}")
         github_trusted = []
 
@@ -61,7 +61,7 @@ async def sync_repository(
     # Sync PRs
     try:
         prs = await client.get_pull_requests(owner, repo)
-    except Exception as e:
+    except Exception:
         logger.exception(f"Failed to fetch PRs for {repo_name}")
         return
 
@@ -164,8 +164,8 @@ async def run_sync_loop(
                 await execute_deployments(config, client)
             finally:
                 await client.close()
-        except Exception as e:
-            logger.exception(f"Sync loop error")
+        except Exception:
+            logger.exception("Sync loop error")
         if once:
             return
         await asyncio.sleep(interval)
