@@ -37,7 +37,7 @@ async def sync_repository(
     try:
         github_trusted = await client.get_collaborators(owner, repo)
     except Exception as e:
-        logger.error(f"Failed to fetch collaborators for {repo_name}: {e}")
+        logger.exception(f"Failed to fetch collaborators for {repo_name}")
         github_trusted = []
 
     all_trusted = set(static_trusted + github_trusted)
@@ -62,7 +62,7 @@ async def sync_repository(
     try:
         prs = await client.get_pull_requests(owner, repo)
     except Exception as e:
-        logger.error(f"Failed to fetch PRs for {repo_name}: {e}")
+        logger.exception(f"Failed to fetch PRs for {repo_name}")
         return
 
     prs_query = (
@@ -78,6 +78,8 @@ async def sync_repository(
         is_open = pr_data["state"] == "OPEN"
         author = pr_data["author"]["login"] if pr_data.get("author") else "unknown"
         head_sha = pr_data["headRefOid"]
+        head_ref = pr_data["headRef"] or {}
+        head_ref_github_graphql_id = head_ref.get("id", "")
         base_ref = pr_data.get("baseRefName")
         updated_at = datetime.fromisoformat(pr_data["updatedAt"].replace("Z", "+00:00"))
 
@@ -91,6 +93,7 @@ async def sync_repository(
                 title=pr_data["title"],
                 repository_id=db_repo.id,
                 head_sha=head_sha,
+                head_ref_github_graphql_id=head_ref_github_graphql_id,
                 base_ref=base_ref,
                 is_open=is_open,
                 author=author,
@@ -105,6 +108,7 @@ async def sync_repository(
             pr.base_ref = base_ref
             if pr.head_sha != head_sha:
                 pr.head_sha = head_sha
+                pr.head_ref_github_graphql_id = head_ref_github_graphql_id
                 needs_update = True
             if pr.is_open != is_open:
                 pr.is_open = is_open
@@ -138,14 +142,10 @@ async def sync_repository(
     await session.commit()
 
 
-async def sync_all(config: AppConfig) -> None:
-    client = GitHubClient(config)
-    try:
-        async with get_session() as session:
-            for repo_name in config.repositories.keys():
-                await sync_repository(session, client, repo_name, config)
-    finally:
-        await client.close()
+async def sync_all(config: AppConfig, client: GitHubClient) -> None:
+    async with get_session() as session:
+        for repo_name in config.repositories.keys():
+            await sync_repository(session, client, repo_name, config)
 
 
 async def run_sync_loop(
@@ -155,13 +155,17 @@ async def run_sync_loop(
 
     while True:
         try:
-            logger.info("Beginning sync of data from GitHub")
-            await sync_all(config)
+            client = GitHubClient(config)
+            try:
+                logger.info("Beginning sync of data from GitHub")
+                await sync_all(config, client)
 
-            logger.info("Executing pending deployments")
-            await execute_deployments(config)
+                logger.info("Executing pending deployments")
+                await execute_deployments(config, client)
+            finally:
+                await client.close()
         except Exception as e:
-            logger.error(f"Sync loop error: {e}")
+            logger.exception(f"Sync loop error")
         if once:
             return
         await asyncio.sleep(interval)

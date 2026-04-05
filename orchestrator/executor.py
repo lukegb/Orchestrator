@@ -13,6 +13,7 @@ from orchestrator.config import AppConfig
 from orchestrator.models import Deployment, PullRequest, PortAllocation
 from orchestrator.db import get_session
 from orchestrator.git_utils import clone_bare, fetch_bare, add_worktree, remove_worktree
+from orchestrator.github import GitHubClient
 from orchestrator.docker_utils import compose_up, compose_down
 from orchestrator.ports import allocate_ports, release_ports
 from orchestrator.nginx import generate_nginx_config, reload_nginx
@@ -28,7 +29,7 @@ def _log(log_file: IO[str], message: str) -> None:
 
 
 async def execute_deployment(
-    config: AppConfig, session: AsyncSession, dep: Deployment
+    config: AppConfig, session: AsyncSession, dep: Deployment, github: GitHubClient
 ) -> None:
     logger.info("Processing deployment %s", dep.project_name)
     repo = dep.pull_request.repository
@@ -41,6 +42,7 @@ async def execute_deployment(
     worktree_path = config.worktrees_path / dep.project_name
     repo_url = f"https://github.com/{repo.name}.git"
     log_path = config.logs_path / f"{dep.project_name}.log"
+    deployment_id = None
 
     # Truncate log file for this deployment action
     with open(log_path, "w") as log_file:
@@ -52,6 +54,20 @@ async def execute_deployment(
 
         try:
             if dep.status in ("needs_bringup", "needs_update"):
+                _log(log_file, f"Creating deployment in GitHub for {dep.pull_request.head_sha}")
+                owner, _, repo_barename = repo.name.partition('/')
+                deployment_id = await github.create_deployment(
+                    owner=owner, repo=repo_barename, ref=dep.pull_request.head_ref_github_graphql_id,
+                    environment=dep.project_name
+                )
+                _log(log_file, f"Created deployment ID {deployment_id}")
+                dep.github_graphql_id = deployment_id
+                await github.create_deployment_status(
+                    deployment_id=deployment_id,
+                    log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
+                    environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
+                    state="IN_PROGRESS")
+
                 _log(log_file, f"Ensuring bare repo exists at {bare_path}")
                 await clone_bare(repo_url, bare_path)
 
@@ -114,15 +130,28 @@ async def execute_deployment(
                 _log(log_file, "=== Deployment complete ===")
                 dep.status = "up"
 
+                try:
+                    await github.create_deployment_status(
+                        deployment_id=deployment_id,
+                        log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
+                        environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
+                        state="SUCCESS")
+                except:
+                    logger.exception("Updating deployment with success state")
+
             elif dep.status == "needs_teardown":
                 _log(log_file, f"Stopping containers for {dep.project_name}")
-                await compose_down(
-                    worktree_path,
-                    dep.project_name,
-                    repo_config.compose_files,
-                    True,
-                    log_file=log_file,
-                )
+                try:
+                    await compose_down(
+                        worktree_path,
+                        dep.project_name,
+                        repo_config.compose_files,
+                        True,
+                        log_file=log_file,
+                    )
+                except Exception as ex:
+                    _log(log_file, str(ex))
+                    _log(log_file, "Continuing anyway...")
 
                 _log(log_file, f"Removing worktree {worktree_path}")
                 await remove_worktree(bare_path, worktree_path)
@@ -130,18 +159,28 @@ async def execute_deployment(
                 _log(log_file, f"Releasing ports for {dep.project_name}")
                 await release_ports(session, dep.id)
 
+                if dep.github_graphql_id:
+                    await github.delete_deployment(dep.github_graphql_id)
+
                 _log(log_file, "")
                 _log(log_file, "=== Teardown complete ===")
                 dep.status = "torn_down"
 
         except Exception as e:
+            if deployment_id:
+                 await github.create_deployment_status(
+                     deployment_id=deployment_id,
+                     log_url=f"https://{config.domain_suffix}/deployments/{dep.id}/logs",
+                     environment_url=f"https://{dep.project_name}.{config.domain_suffix}",
+                     description=str(e),
+                     state="FAILURE")
             _log(log_file, "")
             _log(log_file, f"!!! ERROR: {e}")
             logger.error(f"Failed to execute {dep.status} for {dep.project_name}: {e}")
             dep.status = "error"
 
 
-async def execute_deployments(config: AppConfig) -> None:
+async def execute_deployments(config: AppConfig, github: GitHubClient) -> None:
     # Ensure logs directory exists
     config.logs_path.mkdir(parents=True, exist_ok=True)
 
@@ -169,7 +208,7 @@ async def execute_deployments(config: AppConfig) -> None:
 
         for dep in pending_deployments:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(execute_deployment(config, session, dep))
+                tg.create_task(execute_deployment(config, session, dep, github))
 
         await session.commit()
         del pending_deployments

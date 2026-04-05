@@ -69,6 +69,7 @@ class GitHubClient:
         auth_header = await self._get_auth_header()
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = auth_header
+        headers["X-Github-Next-Global-ID"] = "1"
 
         resp = await self.client.request(method, url, headers=headers, **kwargs)
         if resp.status_code >= 400:
@@ -102,6 +103,9 @@ class GitHubClient:
                 }
                 baseRefName
                 headRefOid
+                headRef {
+                  id
+                }
                 updatedAt
               }
             }
@@ -138,6 +142,80 @@ class GitHubClient:
             query, {"owner": owner, "repo": repo, "number": number}
         )
         return data["repository"]["pullRequest"]["headRefOid"]
+
+    async def create_deployment(
+        self, owner: str, repo: str, ref: str, environment: str
+    ) -> str:
+        get_data = """
+        query($owner: String!, $repo: String!) {
+          repository(owner: $owner, name: $repo) {
+            id
+          }
+        }
+        """
+        data = await self.graphql(
+            get_data, {"owner": owner, "repo": repo}
+        )
+
+        create_deployment_input = {
+            "autoMerge": False,
+            "requiredContexts": [],
+            "task": "deploy",
+
+            "environment": environment,
+            "refId": ref,
+            "repositoryId": data['repository']['id'],
+        }
+        mutation = """
+        mutation CreateDeployment($input: CreateDeploymentInput!) {
+          createDeployment(input: $input) {
+            deployment {
+              id
+            }
+          }
+        }
+        """
+        mutation_data = await self.graphql(
+            mutation, {"input": create_deployment_input},
+        )
+        return mutation_data['createDeployment']['deployment']['id']
+
+    async def create_deployment_status(
+        self, deployment_id: str, *, log_url: str, environment_url: str, state: str, description: str | None = None) -> str:
+        create_status_input = {
+            'deploymentId': deployment_id,
+            'logUrl': log_url,
+            'environmentUrl': environment_url,
+            'state': state,
+            'autoInactive': True,
+        }
+        if description is not None:
+            create_status_input['description'] = description
+        mutation = """
+        mutation CreateDeploymentStatus($input: CreateDeploymentStatusInput!) {
+          createDeploymentStatus(input: $input) {
+            deploymentStatus {
+              id
+            }
+          }
+        }
+        """
+        mutation_data = await self.graphql(
+            mutation, {"input": create_status_input},
+        )
+        return mutation_data['createDeploymentStatus']['deploymentStatus']['id']
+
+    async def delete_deployment(
+        self, deployment_id: str
+    ) -> None:
+        mutation = """
+        mutation DeleteDeployment($id: ID!) {
+          deleteDeployment(id: $id)
+        }
+        """
+        await self.graphql(
+            mutation, {"id": deployment_id},
+        )
 
     async def close(self) -> None:
         await self.client.aclose()

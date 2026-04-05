@@ -48,6 +48,7 @@ class PullRequest(Base):
     title: Mapped[str] = mapped_column(String(255))
     repository_id: Mapped[int] = mapped_column(ForeignKey("repository.id"))
     head_sha: Mapped[str] = mapped_column(String(40))
+    head_ref_github_graphql_id: Mapped[str] = mapped_column(String(255), server_default='')
     base_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
     author: Mapped[str] = mapped_column(String(255))
@@ -67,6 +68,7 @@ class Deployment(Base):
     status: Mapped[str] = mapped_column(
         String(50)
     )  # 'up', 'needs_update', 'needs_teardown'
+    github_graphql_id: Mapped[str] = mapped_column(String(255), server_default='')
 
     pull_request: Mapped["PullRequest"] = relationship(back_populates="deployments")
     ports: Mapped[List["PortAllocation"]] = relationship(back_populates="deployment")

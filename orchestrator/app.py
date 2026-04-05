@@ -106,7 +106,12 @@ async def sync_endpoint(request: Request) -> Response:
     if not request.session.get("user"):
         return Response("Unauthorized", status_code=401)
 
-    await sync_all(app_config)
+    github = GitHubClient(app_config)
+    try:
+        await sync_all(app_config, github)
+    finally:
+        await github.close()
+
     return RedirectResponse(url="/", status_code=303)
 
 
