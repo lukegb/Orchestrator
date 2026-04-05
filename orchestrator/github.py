@@ -213,13 +213,15 @@ class GitHubClient:
 
     async def delete_deployment(self, deployment_id: str) -> None:
         mutation = """
-        mutation DeleteDeployment($id: ID!) {
-          deleteDeployment(id: $id)
+        mutation DeleteDeployment($input: DeleteDeploymentInput!) {
+          deleteDeployment(input: $input) {
+            clientMutationId
+          }
         }
         """
         await self.graphql(
             mutation,
-            {"id": deployment_id},
+            {"input": {"id": deployment_id}},
         )
 
     async def close(self) -> None:
